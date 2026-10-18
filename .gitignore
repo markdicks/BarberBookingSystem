@@ -1,0 +1,29 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+*.log
+
+# Local configuration and booking data
+.env
+.env.*
+!.env.example
+data/
+*.sqlite
+*.sqlite-*
+
+# Editor, OS and AI assistant files
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.codex/
+.agents/
+.chatgpt/
+chatgpt/
+AGENTS.md
+CLAUDE.md
+*.user
+*.suo
