@@ -6,6 +6,7 @@ import pg from 'pg';
 const postgres = Boolean(process.env.DATABASE_URL);
 let pool;
 let sqlite;
+let sqliteQueue = Promise.resolve();
 
 const schema = `
 CREATE TABLE IF NOT EXISTS customers (
@@ -80,14 +81,22 @@ export async function transaction(fn) {
       throw error;
     } finally { client.release(); }
   }
-  sqlite.exec('BEGIN IMMEDIATE');
+  let release;
+  const previous = sqliteQueue;
+  sqliteQueue = new Promise(resolve => { release = resolve; });
+  await previous;
   try {
-    const result = await fn(null);
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    sqlite.exec('ROLLBACK');
-    throw error;
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      const result = await fn(null);
+      sqlite.exec('COMMIT');
+      return result;
+    } catch (error) {
+      sqlite.exec('ROLLBACK');
+      throw error;
+    }
+  } finally {
+    release();
   }
 }
 

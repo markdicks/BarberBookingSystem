@@ -62,6 +62,10 @@ test('first visit verifies, books, blocks a duplicate, and releases a cancelled 
   assert.equal(cancelled.response.status, 200);
   const second = await request('/api/bookings', { method: 'POST', headers: { Cookie: cookie }, body: JSON.stringify(bookingData) });
   assert.equal(second.response.status, 201);
+  const remaining = await request(`/api/availability?date=${date}`);
+  const concurrentData = { ...bookingData, time: remaining.data.slots[0] };
+  const attempts = await Promise.all([1, 2].map(() => request('/api/bookings', { method: 'POST', headers: { Cookie: cookie }, body: JSON.stringify(concurrentData) })));
+  assert.deepEqual(attempts.map(attempt => attempt.response.status).sort(), [201, 409]);
 });
 
 test('WhatsApp chat quotes a price and waits for confirmation before booking', async () => {
