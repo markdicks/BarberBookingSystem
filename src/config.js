@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 export const ZONE = 'Africa/Johannesburg';
 export const SLOT_MINUTES = 30;
 export const BOOKING_DAYS_AHEAD = 30;
-export const DEFAULT_SCHEDULE = {
+export const SCHEDULE = {
   1: ['08:00', '20:00'], 2: ['08:00', '20:00'],
   3: ['08:00', '20:00'], 4: ['08:00', '20:00'],
   5: ['08:00', '17:30'], 6: ['08:00', '14:30']
@@ -26,22 +26,6 @@ export function surchargeForTime(time) {
   return 0;
 }
 
-function validClock(value) {
-  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-}
-
-export function getSchedule() {
-  if (!process.env.SCHEDULE_JSON) return DEFAULT_SCHEDULE;
-  const parsed = JSON.parse(process.env.SCHEDULE_JSON);
-  for (const [day, hours] of Object.entries(parsed)) {
-    if (!/^[1-7]$/.test(day) || !Array.isArray(hours) || hours.length !== 2 ||
-        !hours.every(validClock) || hours[0] >= hours[1]) {
-      throw new Error('SCHEDULE_JSON must map weekday numbers 1-7 to [open, close] in HH:mm format.');
-    }
-  }
-  return parsed;
-}
-
 export function isValidDate(date) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date || '') &&
     DateTime.fromISO(date, { zone: ZONE }).isValid;
@@ -51,7 +35,7 @@ export function candidateSlots(date, now = DateTime.now().setZone(ZONE)) {
   if (!isValidDate(date)) return [];
   const day = DateTime.fromISO(date, { zone: ZONE });
   if (day < now.startOf('day') || day > now.startOf('day').plus({ days: BOOKING_DAYS_AHEAD })) return [];
-  const hours = getSchedule()[day.weekday];
+  const hours = SCHEDULE[day.weekday];
   if (!hours) return [];
   let cursor = DateTime.fromISO(`${date}T${hours[0]}`, { zone: ZONE });
   const closing = DateTime.fromISO(`${date}T${hours[1]}`, { zone: ZONE });

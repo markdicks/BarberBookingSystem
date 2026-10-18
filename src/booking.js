@@ -25,8 +25,8 @@ export async function createBooking(customerId, date, time, serviceKey, source =
       const id = randomUUID();
       const createdAt = new Date().toISOString();
       const surcharge = surchargeForTime(time);
-      await query('INSERT INTO bookings (id, customer_id, slot_date, slot_time, service_key, price_zar, surcharge_zar, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, customerId, date, time, serviceKey, service.price, surcharge, 'confirmed', source, createdAt], client);
+      await query('INSERT INTO bookings (id, customer_id, slot_date, slot_time, slot_key, service_key, price_zar, surcharge_zar, status, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, customerId, date, time, `${date}T${time}`, serviceKey, service.price, surcharge, 'confirmed', source, createdAt], client);
       return { id, date, time, service: service.name, total: service.price + surcharge, status: 'confirmed' };
     });
   } catch (error) {
@@ -52,7 +52,7 @@ export async function cancelBooking(customerId, bookingId) {
     const hours = appointment.diffNow('hours').hours;
     if (hours <= 0) return null;
     const fee = hours < 3 ? 80 : 0;
-    await query("UPDATE bookings SET status = 'cancelled', cancellation_fee_zar = ? WHERE id = ? AND customer_id = ?", [fee, bookingId, customerId], client);
+    await query("UPDATE bookings SET status = 'cancelled', slot_key = NULL, cancellation_fee_zar = ? WHERE id = ? AND customer_id = ?", [fee, bookingId, customerId], client);
     return { cancellationFee: fee };
   });
 }

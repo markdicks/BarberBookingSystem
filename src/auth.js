@@ -1,93 +1,82 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import twilio from 'twilio';
+import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { normalizePhone, safeName } from './config.js';
-import { query } from './db.js';
+import { isUniqueError, query } from './db.js';
 
-const localCodes = new Map();
-const requests = new Map();
+const scrypt = promisify(scryptCallback);
 const COOKIE = 'bsb_session';
 const SESSION_DAYS = 30;
+const failedLogins = new Map();
 
-function twilioClient() {
-  return twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-}
+function hash(value) { return createHash('sha256').update(value).digest('hex'); }
+function badRequest(message) { return Object.assign(new Error(message), { status: 400 }); }
 
 export function validateProductionConfig() {
   if (process.env.NODE_ENV !== 'production') return;
-  for (const key of ['DATABASE_URL', 'PUBLIC_BASE_URL', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID']) {
-    if (!process.env[key]) throw new Error(`${key} is required in production.`);
-  }
-  if (!process.env.PUBLIC_BASE_URL.startsWith('https://')) throw new Error('PUBLIC_BASE_URL must use HTTPS in production.');
+  const hasUrl = Boolean(process.env.DATABASE_URL);
+  const hasSeparateValues = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'].every(key => process.env[key]);
+  if (!hasUrl && !hasSeparateValues) throw new Error('Set DATABASE_URL or the Hostinger DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME variables.');
+  if (!process.env.PUBLIC_BASE_URL?.startsWith('https://')) throw new Error('PUBLIC_BASE_URL must be your HTTPS site URL in production.');
 }
 
-function hash(value) { return createHash('sha256').update(value).digest('hex'); }
+function validPassword(password) {
+  return typeof password === 'string' && password.length >= 8 && password.length <= 128;
+}
 
-export async function requestCode(phoneInput, ip = '') {
+async function passwordHash(password) {
+  const salt = randomBytes(16).toString('hex');
+  const derived = await scrypt(password, salt, 64);
+  return `scrypt$${salt}$${derived.toString('hex')}`;
+}
+
+async function passwordMatches(password, stored) {
+  if (!validPassword(password) || !stored?.startsWith('scrypt$')) return false;
+  const parts = stored.split('$');
+  if (parts.length !== 3 || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{128}$/.test(parts[2])) return false;
+  const actual = await scrypt(password, parts[1], 64);
+  return timingSafeEqual(actual, Buffer.from(parts[2], 'hex'));
+}
+
+function checkLoginLimit(phone) {
+  const recent = (failedLogins.get(phone) || []).filter(time => Date.now() - time < 15 * 60000);
+  failedLogins.set(phone, recent);
+  if (recent.length >= 8) throw Object.assign(new Error('Too many attempts. Try again in 15 minutes.'), { status: 429 });
+}
+
+function recordFailedLogin(phone) {
+  failedLogins.set(phone, [...(failedLogins.get(phone) || []), Date.now()]);
+}
+
+export async function accessAccount(phoneInput, name, password) {
   const phone = normalizePhone(phoneInput);
-  if (!phone) throw Object.assign(new Error('Enter a valid mobile number.'), { status: 400 });
-  const now = Date.now();
-  for (const [key, value] of requests) if (now - value > 3600000) requests.delete(key);
-  for (const key of [phone, `ip:${ip}`]) {
-    const last = requests.get(key);
-    if (last && now - last < 60000) throw Object.assign(new Error('Please wait a minute before requesting another code.'), { status: 429 });
-  }
-  if (process.env.NODE_ENV === 'production') {
-    await twilioClient().verify.v2.services(process.env.TWILIO_VERIFY_SERVICE_SID)
-      .verifications.create({ to: phone, channel: 'whatsapp' });
+  if (!phone) throw badRequest('Enter a valid mobile number.');
+  if (!validPassword(password)) throw badRequest('Use a password with 8 to 128 characters.');
+  checkLoginLimit(phone);
+
+  const existing = (await query('SELECT id, phone, name, password_hash FROM customers WHERE phone = ?', [phone]))[0];
+  let customer;
+  if (existing) {
+    if (!existing.password_hash) throw Object.assign(new Error('This account needs a password reset. Please contact the shop.'), { status: 409 });
+    if (!(await passwordMatches(password, existing.password_hash))) {
+      recordFailedLogin(phone);
+      throw Object.assign(new Error('Incorrect mobile number or password.'), { status: 401 });
+    }
+    failedLogins.delete(phone);
+    customer = { id: existing.id, phone: existing.phone, name: existing.name };
   } else {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    localCodes.set(phone, { hash: hash(code), expires: now + 10 * 60000, attempts: 0 });
-    console.log(`Development OTP for ${phone}: ${code}`);
+    const cleanName = safeName(name);
+    if (!cleanName) throw badRequest('Enter your name to create your account.');
+    const id = randomUUID();
+    try {
+      await query('INSERT INTO customers (id, phone, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+        [id, phone, cleanName, await passwordHash(password), new Date().toISOString()]);
+    } catch (error) {
+      if (isUniqueError(error)) throw Object.assign(new Error('This number already has an account. Enter its password to log in.'), { status: 409 });
+      throw error;
+    }
+    customer = { id, phone, name: cleanName };
   }
-  requests.set(phone, now);
-  requests.set(`ip:${ip}`, now);
-  return phone;
-}
 
-async function verifyCode(phone, code) {
-  if (!/^\d{4,8}$/.test(String(code || ''))) return false;
-  if (process.env.NODE_ENV === 'production') {
-    const result = await twilioClient().verify.v2.services(process.env.TWILIO_VERIFY_SERVICE_SID)
-      .verificationChecks.create({ to: phone, code: String(code) });
-    return result.status === 'approved';
-  }
-  const record = localCodes.get(phone);
-  if (!record || record.expires < Date.now() || record.attempts >= 5) return false;
-  record.attempts++;
-  const good = timingSafeEqual(Buffer.from(record.hash), Buffer.from(hash(String(code))));
-  if (good) localCodes.delete(phone);
-  return good;
-}
-
-export async function customerByPhone(phone) {
-  return (await query('SELECT id, phone, name FROM customers WHERE phone = ?', [phone]))[0] || null;
-}
-
-export async function ensureCustomer(phone, name) {
-  const existing = await customerByPhone(phone);
-  if (existing) return existing;
-  const cleanName = safeName(name);
-  if (!cleanName) throw Object.assign(new Error('Enter your name to create your account.'), { status: 400 });
-  const id = randomUUID();
-  try {
-    await query('INSERT INTO customers (id, phone, name, created_at) VALUES (?, ?, ?, ?)', [id, phone, cleanName, new Date().toISOString()]);
-    return { id, phone, name: cleanName };
-  } catch (error) {
-    const raced = await customerByPhone(phone);
-    if (raced) return raced;
-    throw error;
-  }
-}
-
-export async function authenticate(phoneInput, code, name) {
-  const phone = normalizePhone(phoneInput);
-  if (phone && !(await customerByPhone(phone)) && !safeName(name)) {
-    throw Object.assign(new Error('Enter your name to create your account.'), { status: 400 });
-  }
-  if (!phone || !(await verifyCode(phone, code))) {
-    throw Object.assign(new Error('The code is incorrect or expired.'), { status: 401 });
-  }
-  const customer = await ensureCustomer(phone, name);
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400000).toISOString();
   await query('INSERT INTO sessions (token_hash, customer_id, expires_at) VALUES (?, ?, ?)', [hash(token), customer.id, expiresAt]);

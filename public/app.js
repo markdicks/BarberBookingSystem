@@ -86,11 +86,8 @@ function updateTotal() {
 function showAuth(forBooking) {
   state.pendingBooking = forBooking;
   message('#auth-message', '');
-  $('#auth-fields').hidden = false;
-  $('#code-fields').hidden = true;
-  $('#code-input').value = '';
   $('#dialog-title').textContent = forBooking ? 'One last step.' : 'Quick sign in.';
-  $('#dialog-subtitle').textContent = forBooking ? 'Confirm your number to finish this booking. Your account is created on your first visit.' : 'Enter your mobile number. We’ll send a one-time code on WhatsApp.';
+  $('#dialog-subtitle').textContent = forBooking ? 'Use your mobile number and password to finish booking. First visit? Add your name to create an account.' : 'Use your mobile number and password. First visit? Add your name and we’ll create your account.';
   $('#account-dialog').showModal();
   $('#phone-input').focus();
 }
@@ -162,7 +159,7 @@ async function init() {
     $('#year').textContent = new Date().getFullYear();
     if (state.config.whatsappNumber) {
       const number = state.config.whatsappNumber.replace(/\D/g, '');
-      if (number) { $('#whatsapp-link').href = `https://wa.me/${number}?text=BOOK`; $('#whatsapp-link').hidden = false; }
+      if (number) { $('#whatsapp-link').href = `https://wa.me/${number}?text=${encodeURIComponent("Hi Braam Street Barbers, I'd like to make a booking.")}`; $('#whatsapp-link').hidden = false; }
     }
   } catch (error) { message('#booking-message', 'The booking service is temporarily unavailable. Please try again shortly.', true); }
 }
@@ -175,22 +172,17 @@ $('#view-bookings').addEventListener('click', showBookings);
 $('#book-another').addEventListener('click', async () => { $('#booking-success').hidden = true; $('#booking-form').hidden = false; await loadSlots(); });
 $('#close-dialog').addEventListener('click', () => $('#account-dialog').close());
 $('#close-bookings').addEventListener('click', () => $('#bookings-dialog').close());
-$('#change-number').addEventListener('click', () => { $('#auth-fields').hidden = false; $('#code-fields').hidden = true; message('#auth-message', ''); });
-$('#send-code').addEventListener('click', async () => {
-  const button = $('#send-code'); button.disabled = true; button.textContent = 'Sending…';
-  try { const result = await post('/api/auth/start', { phone: $('#phone-input').value }); $('#phone-input').value = result.phone; $('#auth-fields').hidden = true; $('#code-fields').hidden = false; $('#code-sent').textContent = result.message; message('#auth-message', ''); $('#code-input').focus(); }
-  catch (error) { message('#auth-message', error.message, true); }
-  finally { button.disabled = false; button.textContent = 'Send WhatsApp code'; }
-});
-$('#verify-code').addEventListener('click', async () => {
-  const button = $('#verify-code'); button.disabled = true; button.textContent = 'Verifying…';
+$('#auth-fields').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('#account-submit'); button.disabled = true; button.textContent = 'Continuing…';
   try {
-    const { customer } = await post('/api/auth/verify', { phone: $('#phone-input').value, name: $('#name-input').value, code: $('#code-input').value });
+    const { customer } = await post('/api/auth/access', { phone: $('#phone-input').value, name: $('#name-input').value, password: $('#password-input').value });
+    $('#password-input').value = '';
     state.customer = customer; $('#account-dialog').close();
     if (state.pendingBooking) { state.pendingBooking = false; await finishBooking(); }
     else await showBookings();
   } catch (error) { message('#auth-message', error.message, true); }
-  finally { button.disabled = false; button.textContent = 'Verify & continue'; }
+  finally { button.disabled = false; button.textContent = 'Continue'; }
 });
 $('#logout').addEventListener('click', async () => { await post('/api/auth/logout', {}); state.customer = null; $('#bookings-dialog').close(); });
 init();

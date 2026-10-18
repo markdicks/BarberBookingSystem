@@ -1,6 +1,8 @@
 # Braam Street Barbers booking
 
-A small Node.js web app for 30-minute barber appointments. Customers choose a service and free slot, verify their phone on WhatsApp, and get a 30-day sign-in session. The same live availability powers the WhatsApp chat booking webhook. Duplicate bookings are blocked by a database unique index.
+Node.js website for 30-minute barber appointments. Customers pick a service and free slot, create an account with their mobile number and password, and can return to view or cancel bookings. A database unique key prevents two confirmed bookings in the same slot.
+
+This version uses **no paid messaging service**. The optional WhatsApp button opens a normal chat with a prefilled message; a person at the shop handles that conversation. There is no automated WhatsApp bot or phone OTP in this version. Phone numbers are contact details and are not verified. No payment or automatic fee collection is included.
 
 ## Run locally
 
@@ -8,26 +10,25 @@ Requires Node.js 22 or later.
 
 ```bash
 npm install
-cp .env.example .env
 npm start
 ```
 
-Open `http://localhost:3000`. On a local development run, the app stores bookings in `data/bookings.sqlite` and prints verification codes in the terminal. Both are excluded from Git. `npm test` runs the booking flow test.
+Open `http://localhost:3000`. Local development uses `data/bookings.sqlite`; the file is ignored by Git. Run `npm test` for account and booking checks.
 
-## Deploy on Hostinger Web App
+## Hostinger Web App setup
 
-1. In Hostinger, create a **Node.js Web App** from this GitHub repository. Use Node.js 22 or 24, npm, and `npm start`. The entry file is `app.js` and there is no build step.
-2. Connect a **persistent PostgreSQL database**, for example through Hostinger's Supabase Database Connect Wizard. Set `DATABASE_URL` to the PostgreSQL connection string. The app creates its tables when it starts. Keep the database separate from the deployment folder; Hostinger replaces that folder on each deployment.
-3. Create a Twilio account, a Verify Service, and a WhatsApp sender approved for your business. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_VERIFY_SERVICE_SID` in Hostinger environment variables. Twilio Verify's WhatsApp channel needs a configured business sender.
-4. Set `NODE_ENV=production`, `PUBLIC_BASE_URL=https://your-domain.example` (no trailing slash), and `BUSINESS_WHATSAPP_NUMBER=+27...` for the WhatsApp button. The number must be the Twilio WhatsApp sender customers can message. Set `DATABASE_SSL=true` for a TLS PostgreSQL connection, or `false` only if your trusted database connection specifically requires it.
-5. In the Twilio WhatsApp sender's **incoming message webhook**, set an HTTP POST URL of `https://your-domain.example/api/whatsapp/webhook`. The app checks Twilio's signature in production. Users can send **BOOK**, **MY BOOKINGS**, or **CANCEL**.
-6. Connect the domain and enable HTTPS. Test a booking on the live domain and an inbound WhatsApp message before sharing the link with customers.
+1. Deploy this GitHub repository as a Node.js Web App. Use Node.js 22 or 24, npm, `npm start`, and entry file `app.js`. There is no build step.
+2. Create a MySQL database in Hostinger under **Websites → Dashboard → Databases → Management**. Hostinger's managed database is MySQL compatible. Enter its credentials as environment variables for this web app. Choose either:
+   - `DATABASE_URL=mysql://user:password@localhost:3306/database_name`, **or**
+   - `DB_HOST`, `DB_PORT` (normally `3306`), `DB_USER`, `DB_PASSWORD`, and `DB_NAME`.
+3. Set `NODE_ENV=production` and `PUBLIC_BASE_URL=https://your-real-domain` in the web app environment. Set `BUSINESS_WHATSAPP_NUMBER=+27...` if you want the manual WhatsApp chat button to appear. `BUSINESS_ADDRESS` is optional; the screenshot address is already the default. `DB_SSL=false` is the default for Hostinger's local database connection; set it to `true` only if your MySQL connection requires TLS.
+4. Restart or redeploy after adding environment variables. Test a booking on the live site and verify the record in Hostinger's database dashboard before sharing the site.
 
-The app fails to start in production if the database, site URL, or Twilio verification settings are missing. Store credentials only in Hostinger environment variables, never in Git.
+The app creates its tables on startup. Keep database credentials in Hostinger environment variables, never in Git. See [Hostinger's MySQL connection guide](https://www.hostinger.com/support/connecting-a-hostinger-mysql-database-to-a-node-js-application/) for finding the database name, username, password, and host.
 
-## Business settings
+## Hours, services, and policies
 
-The supplied screenshots set the default address and hours:
+The opening hours from the supplied screenshot are in `src/config.js` as `SCHEDULE`:
 
 | Day | Hours |
 | --- | --- |
@@ -36,8 +37,12 @@ The supplied screenshots set the default address and hours:
 | Saturday | 08:00–14:30 |
 | Sunday | Closed |
 
-Times are in `Africa/Johannesburg`. A slot starts every 30 minutes, must end before closing, and can be booked up to 30 days ahead with at least one hour's notice. To change hours without editing code, set `SCHEDULE_JSON` as shown in `.env.example`. Weekdays are numbered 1 (Monday) to 7 (Sunday). Omit a closed day.
+There is **no `SCHEDULE_JSON` setting**. To change hours, edit `SCHEDULE` in `src/config.js`, commit, and push. Times use `Africa/Johannesburg`. Slots start every 30 minutes, end before closing, and can be booked 30 days ahead with at least one hour's notice.
 
-Prices in `src/config.js` are full cut R150, only fade R130, mullet taper R100, full beard work R20, and line ups R10. Online bookings reserve one 30-minute slot for any service. Bookings from 18:00 to 18:59 add R10; 19:00 to 19:59 add R20. The screenshot lists R30 after 20:00, but regular online hours end at 20:00, so the site directs customers to WhatsApp for later appointments by arrangement. A R30 late fee applies after 7 minutes. Cancellations within 3 hours are marked with an R80 fee, as are no-shows according to the displayed policy. **No payment collection or automated fee charging is included.**
+Service prices are full cut R150, only fade R130, mullet taper R100, full beard work R20, and line ups R10. Each online booking reserves one 30-minute slot. Starts from 18:00 to 18:59 add R10; 19:00 to 19:59 add R20. For 20:00 onward, customers should ask by WhatsApp as the regular online calendar closes at 20:00. The displayed policies are R30 for arrival 7+ minutes late and R80 for cancellation within 3 hours or a no-show. Late cancellation fees are recorded but not charged through the site.
 
-The WhatsApp number wasn't present in the screenshots and must be supplied through `BUSINESS_WHATSAPP_NUMBER`. The supplied logo is in `public/assets/braam-street-logo.png`.
+The WhatsApp number was not in the screenshots, so add it through `BUSINESS_WHATSAPP_NUMBER` when ready. The logo is in `public/assets/braam-street-logo.png`.
+
+## Account limitation
+
+Without a messaging provider, the site cannot prove that a customer owns the number entered. Passwords are salted and hashed, but self-service password recovery is not included. A customer who forgets their password will need help from the shop. Do not collect sensitive payment details through this site or a regular WhatsApp chat.

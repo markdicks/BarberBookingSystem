@@ -3,11 +3,10 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
-import { ADDRESS, getSchedule, SERVICES, SLOT_MINUTES, ZONE } from './src/config.js';
+import { ADDRESS, SCHEDULE, SERVICES, SLOT_MINUTES, ZONE } from './src/config.js';
 import { initDb } from './src/db.js';
-import { authenticate, clearSessionCookie, currentCustomer, logout, requestCode, setSessionCookie, validateProductionConfig } from './src/auth.js';
+import { accessAccount, clearSessionCookie, currentCustomer, logout, setSessionCookie, validateProductionConfig } from './src/auth.js';
 import { availableSlots, bookingsForCustomer, cancelBooking, createBooking } from './src/booking.js';
-import { whatsappWebhook } from './src/whatsapp.js';
 
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -21,9 +20,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '16kb' }));
-app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 app.use((req, res, next) => {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || req.path === '/api/whatsapp/webhook') return next();
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   const origin = req.get('origin');
   const allowed = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
   if (origin && origin !== new URL(allowed).origin) return res.status(403).json({ error: 'Request origin is not allowed.' });
@@ -33,19 +31,15 @@ app.use((req, res, next) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/config', (_req, res) => res.json({
   businessName: 'Braam Street Barbers', address: ADDRESS, timezone: ZONE,
-  slotMinutes: SLOT_MINUTES, services: SERVICES, schedule: getSchedule(),
+  slotMinutes: SLOT_MINUTES, services: SERVICES, schedule: SCHEDULE,
   today: DateTime.now().setZone(ZONE).toISODate(), maxDate: DateTime.now().setZone(ZONE).plus({ days: 30 }).toISODate(),
   whatsappNumber: process.env.BUSINESS_WHATSAPP_NUMBER || null,
   policies: { lateArrival: 'R30 after 7 minutes', lateCancellation: 'R80 within 3 hours or for a no-show', afterHours: '18:00–18:59 +R10; 19:00–19:59 +R20; 20:00+ +R30 by arrangement' }
 }));
 app.get('/api/availability', async (req, res) => res.json({ date: req.query.date || null, slots: await availableSlots(req.query.date) }));
 app.get('/api/me', async (req, res) => res.json({ customer: await currentCustomer(req) }));
-app.post('/api/auth/start', async (req, res) => {
-  const phone = await requestCode(req.body?.phone, req.ip);
-  res.json({ phone, message: process.env.NODE_ENV === 'production' ? 'We sent a code to your WhatsApp.' : 'Development code printed in the server terminal.' });
-});
-app.post('/api/auth/verify', async (req, res) => {
-  const { customer, token } = await authenticate(req.body?.phone, req.body?.code, req.body?.name);
+app.post('/api/auth/access', async (req, res) => {
+  const { customer, token } = await accessAccount(req.body?.phone, req.body?.name, req.body?.password, req.ip);
   setSessionCookie(res, token);
   res.json({ customer });
 });
@@ -71,7 +65,6 @@ app.delete('/api/bookings/:id', requireCustomer, async (req, res) => {
   if (!result) return res.status(404).json({ error: 'This booking cannot be cancelled.' });
   res.json({ ok: true, ...result });
 });
-app.post('/api/whatsapp/webhook', whatsappWebhook);
 app.use('/assets', express.static(path.join(root, 'public/assets'), { maxAge: '1d' }));
 app.use(express.static(path.join(root, 'public'), { extensions: ['html'] }));
 app.use((error, _req, res, _next) => {
