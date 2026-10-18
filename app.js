@@ -73,10 +73,20 @@ app.use((error, _req, res, _next) => {
 });
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  validateProductionConfig();
-  await initDb();
-  const port = Number(process.env.PORT || 3000);
-  app.listen(port, () => console.log(`Braam Street Barbers booking app ready on port ${port}`));
+  async function startServer() {
+    validateProductionConfig();
+    await initDb();
+    const port = Number(process.env.PORT || 3000);
+    app.listen(port, () => console.log(`Braam Street Barbers booking app ready on port ${port}`));
+  }
+
+  // Hostinger's Node launcher loads the configured entry file with require().
+  // Keep startup asynchronous without top-level await so Node can synchronously
+  // load this ESM entry point from that CommonJS launcher.
+  startServer().catch(error => {
+    console.error('Failed to start Braam Street Barbers booking app:', error);
+    process.exitCode = 1;
+  });
 }
 
 export default app;
