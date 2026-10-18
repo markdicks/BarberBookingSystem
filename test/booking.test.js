@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DateTime } from 'luxon';
-import app from '../app.js';
+import app from '../src/app.js';
 import { closeDb, initDb } from '../src/db.js';
 import { ZONE } from '../src/config.js';
 

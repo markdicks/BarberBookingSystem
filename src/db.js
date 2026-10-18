@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import mysql from 'mysql2/promise';
 
 const hosted = Boolean(process.env.DATABASE_URL || process.env.DB_HOST);
@@ -85,6 +84,7 @@ export async function initDb() {
     finally { connection.release(); }
   } else {
     if (process.env.NODE_ENV === 'production') throw new Error('Hostinger MySQL configuration is required in production.');
+    const { DatabaseSync } = await import('node:sqlite');
     const filename = path.resolve(process.env.BOOKING_DB_PATH || 'data/bookings.sqlite');
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     sqlite = new DatabaseSync(filename);
